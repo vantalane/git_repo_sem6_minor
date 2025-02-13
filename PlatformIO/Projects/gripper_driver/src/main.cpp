@@ -36,12 +36,14 @@
 #define SERVO_START_POS 0
 
 /*Degrees per mS, datasheep max: 0.17 s/60º (4.8 V) ~~ 2.5mS max*/
-#define SERVO_OPEN_MS 1000
+#define SERVO_OPEN_MS 260
 
 /* Moves 90 +- 60 */
-#define SERVO_CLOSE_VAL 110
-#define SERVO_OPEN_VAL 80
 #define SERVO_STOP_VAL 90
+#define SERVO_CLOSE_VAL 80
+#define SERVO_SQUEEZE_VAL 87
+#define SERVO_OPEN_VAL 100
+
 
 // #define SERIAL_CONTROL
 
@@ -364,29 +366,44 @@ void motor_system_state_machine()
 
     if (object_gripped())
     {
-      /* Records how long to open for*/
-      Serial.println("STMCN: OBJ grabbed.");
-      grip_open_delta_time = millis() - process_start_time;
-      gripper_state = holding;
-      digitalWrite(OUT0, HIGH);
-      return;
 
-    } /*100ms for tolerance*/
-    else if ((millis() - process_start_time) >= (SERVO_OPEN_MS - 100))
-    {
-      Serial.println("STMCN: OBJ NOT grabbed.");
-      grip_open_delta_time = millis() - process_start_time;
-      Serial.println("reached endstop");
-      gripper_state = holding;
-      digitalWrite(OUT1, HIGH);
-      return;
+      /*Check if we practically close without grabbing something. */
+      if ((millis() - process_start_time) >= (SERVO_OPEN_MS - 2))
+      {
+        Serial.println("STMCN: OBJ NOT grabbed.");
+        grip_open_delta_time = millis() - process_start_time;
+        /*Clip it in case touch isn't detectec*/
+        if (grip_open_delta_time > SERVO_OPEN_MS)
+        {
+          grip_open_delta_time = SERVO_OPEN_MS;
+        }
+
+        Serial.println("reached endstop");
+        gripper_state = holding;
+        digitalWrite(OUT1, HIGH);
+        return;
+      }
+      else /* if it was under gripped before timeout*/
+      {
+        /* Records how long to open for*/
+        Serial.println("STMCN: OBJ grabbed.");
+        grip_open_delta_time = millis() - process_start_time;
+        /*Clip it in case touch isn't detectec*/
+        if (grip_open_delta_time > SERVO_OPEN_MS)
+        {
+          grip_open_delta_time = SERVO_OPEN_MS;
+        }
+        gripper_state = holding;
+        digitalWrite(OUT0, HIGH);
+        return;
+      }
     }
 
     break;
 
   case holding:
 
-    Goto(&g_servoMotor0, SERVO_STOP_VAL);
+    Goto(&g_servoMotor0, SERVO_SQUEEZE_VAL);
     /*if grip signal is not there anymore*/
     if (!digitalRead(IN0))
     {

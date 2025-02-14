@@ -38,7 +38,7 @@
 #define SERVO_OPEN_MS 260
 
 /* Moves 90 +- 60 */
-#define SERVO_CLOSE_VAL 120
+#define SERVO_CLOSE_VAL 110
 #define SERVO_OPEN_VAL 80
 
 // #define SERIAL_CONTROL
@@ -46,7 +46,7 @@
 /*Degrees per mS, datasheep max: 0.17 s/60º (4.8 V) ~~ 2.5mS max*/
 #define SERVO_DEGPS_MS 10
 
-#define PRESSURE_FILTER_MS 20
+#define PRESSURE_FILTER_MS 10
 
 typedef enum servo_driver_states
 {

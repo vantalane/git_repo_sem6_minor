@@ -309,6 +309,8 @@ void motor_system_state_machine()
   case open:
 
     Goto(&g_servoMotor0, SERVO_OPEN_VAL);
+    digitalWrite(OUT0, LOW);
+    digitalWrite(OUT1, LOW);
 
     if (digitalRead(IN0))
     {
@@ -322,21 +324,24 @@ void motor_system_state_machine()
   case closing:
 
     /* CHange this to a filtered global value.*/
-    if (object_detect)
-    {
-      gripper_state = holding;
-      Serial.println("STMCN: OBJ grabbed.");
-      digitalWrite(OUT0, HIGH);
-    }
-    else if ((millis() - process_start_time) >= SERVO_DEGPS_MS)
+
+    /*Run once deg per ms*/
+    if ((millis() - process_start_time) >= SERVO_DEGPS_MS)
     {
       process_start_time = millis();
 
-      /* check if holding position reached close value.*/
-      /*Check if we practically close without grabbing something. */
-      if (holding_position < SERVO_CLOSE_VAL)
+      if (object_detect)
+      {
+        gripper_state = holding;
+        Serial.println("STMCN: OBJ grabbed.");
+        digitalWrite(OUT0, HIGH);
+        return;
+      }
+      else if (holding_position < SERVO_CLOSE_VAL)
       {
         holding_position++;
+        /*Move towards closed position.*/
+        Goto(&g_servoMotor0, holding_position);
       }
       else
       {
@@ -345,11 +350,8 @@ void motor_system_state_machine()
         Serial.println("STMCN: OBJ NOT grabbed.");
         Serial.println("reached endstop");
         digitalWrite(OUT1, HIGH);
+        return;
       }
-
-      /*Move towards closed position.*/
-      Goto(&g_servoMotor0, holding_position);
-      return;
     }
 
     break;
@@ -363,6 +365,7 @@ void motor_system_state_machine()
       Serial.println("STMCN: Grabber released.");
       holding_position = SERVO_OPEN_VAL;
       gripper_state = opening;
+      process_start_time = millis();
       return;
     }
 
@@ -371,9 +374,11 @@ void motor_system_state_machine()
   case opening:
 
     Goto(&g_servoMotor0, SERVO_OPEN_VAL);
-    digitalWrite(OUT0, LOW);
-    digitalWrite(OUT1, LOW);
-    gripper_state = open;
+    /*Time to open gripper*/
+    if (millis() - process_start_time > 100)
+    {
+      gripper_state = open;
+    }
     break;
 
   default:

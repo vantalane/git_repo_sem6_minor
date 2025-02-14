@@ -35,17 +35,18 @@
 #define SERVO_OFFSET 0
 #define SERVO_START_POS 0
 
-/*Degrees per mS, datasheep max: 0.17 s/60º (4.8 V) ~~ 2.5mS max*/
 #define SERVO_OPEN_MS 260
 
 /* Moves 90 +- 60 */
-#define SERVO_STOP_VAL 90
-#define SERVO_CLOSE_VAL 80
-#define SERVO_SQUEEZE_VAL 87
-#define SERVO_OPEN_VAL 100
-
+#define SERVO_CLOSE_VAL 120
+#define SERVO_OPEN_VAL 80
 
 // #define SERIAL_CONTROL
+
+/*Degrees per mS, datasheep max: 0.17 s/60º (4.8 V) ~~ 2.5mS max*/
+#define SERVO_DEGPS_MS 10
+
+#define PRESSURE_FILTER_MS 20
 
 typedef enum servo_driver_states
 {
@@ -56,7 +57,10 @@ typedef enum servo_driver_states
   opening
 };
 
-servo_driver_states gripper_state = initial;
+servo_driver_states gripper_state = open;
+uint8_t holding_position = SERVO_OPEN_VAL;
+uint32_t trigger_time = 0;
+bool object_detect = 0;
 
 /*movement range goes from 0 - 120 degs*/
 // uint8_t servo_position = 0;
@@ -289,52 +293,6 @@ bool object_gripped()
   }
 }
 
-void init_motor_endstop()
-{
-  static uint8_t ministate = 0;
-  static uint32_t time_capt = 0;
-
-  switch (ministate)
-  {
-  case 0:
-
-    Goto(&g_servoMotor0, SERVO_CLOSE_VAL);
-
-    if (object_gripped())
-    {
-      Serial.print("detected :");
-      Serial.println(object_gripped ? "touch" : "notouch");
-
-      ministate = 1;
-      time_capt = millis();
-      return;
-    }
-
-    break;
-
-  case 1:
-    Goto(&g_servoMotor0, SERVO_OPEN_VAL);
-
-    if ((millis() - time_capt) >= (SERVO_OPEN_MS))
-    {
-      ministate = 2;
-      return;
-    }
-
-    break;
-
-  case 2:
-
-    Goto(&g_servoMotor0, SERVO_STOP_VAL);
-    gripper_state = open;
-    Serial.println("Done");
-    break;
-
-  default:
-    break;
-  }
-}
-
 void motor_system_state_machine()
 {
 
@@ -344,17 +302,18 @@ void motor_system_state_machine()
   switch (gripper_state)
   {
   case initial:
-    init_motor_endstop();
+    // init_motor_endstop();
+    gripper_state = open; /*Skip it*/
     break;
 
   case open:
 
-    Goto(&g_servoMotor0, SERVO_STOP_VAL);
+    Goto(&g_servoMotor0, SERVO_OPEN_VAL);
 
     if (digitalRead(IN0))
     {
       Serial.println("STMCN: Close init");
-      process_start_time = millis();
+      // process_start_time = millis();
       gripper_state = closing;
       return;
     }
@@ -362,53 +321,47 @@ void motor_system_state_machine()
 
   case closing:
 
-    Goto(&g_servoMotor0, SERVO_CLOSE_VAL);
-
-    if (object_gripped())
+    /* CHange this to a filtered global value.*/
+    if (object_detect)
     {
+      gripper_state = holding;
+      Serial.println("STMCN: OBJ grabbed.");
+      digitalWrite(OUT0, HIGH);
+    }
+    else if ((millis() - process_start_time) >= SERVO_DEGPS_MS)
+    {
+      process_start_time = millis();
 
+      /* check if holding position reached close value.*/
       /*Check if we practically close without grabbing something. */
-      if ((millis() - process_start_time) >= (SERVO_OPEN_MS - 2))
+      if (holding_position < SERVO_CLOSE_VAL)
       {
+        holding_position++;
+      }
+      else
+      {
+        /* Else must be equal or under*/
+        gripper_state = holding;
         Serial.println("STMCN: OBJ NOT grabbed.");
-        grip_open_delta_time = millis() - process_start_time;
-        /*Clip it in case touch isn't detectec*/
-        if (grip_open_delta_time > SERVO_OPEN_MS)
-        {
-          grip_open_delta_time = SERVO_OPEN_MS;
-        }
-
         Serial.println("reached endstop");
-        gripper_state = holding;
         digitalWrite(OUT1, HIGH);
-        return;
       }
-      else /* if it was under gripped before timeout*/
-      {
-        /* Records how long to open for*/
-        Serial.println("STMCN: OBJ grabbed.");
-        grip_open_delta_time = millis() - process_start_time;
-        /*Clip it in case touch isn't detectec*/
-        if (grip_open_delta_time > SERVO_OPEN_MS)
-        {
-          grip_open_delta_time = SERVO_OPEN_MS;
-        }
-        gripper_state = holding;
-        digitalWrite(OUT0, HIGH);
-        return;
-      }
+
+      /*Move towards closed position.*/
+      Goto(&g_servoMotor0, holding_position);
+      return;
     }
 
     break;
 
   case holding:
 
-    Goto(&g_servoMotor0, SERVO_SQUEEZE_VAL);
+    Goto(&g_servoMotor0, holding_position);
     /*if grip signal is not there anymore*/
     if (!digitalRead(IN0))
     {
       Serial.println("STMCN: Grabber released.");
-      process_start_time = millis();
+      holding_position = SERVO_OPEN_VAL;
       gripper_state = opening;
       return;
     }
@@ -420,13 +373,7 @@ void motor_system_state_machine()
     Goto(&g_servoMotor0, SERVO_OPEN_VAL);
     digitalWrite(OUT0, LOW);
     digitalWrite(OUT1, LOW);
-
-    if ((millis() - process_start_time) >= grip_open_delta_time)
-    {
-      gripper_state = open;
-      return;
-    }
-
+    gripper_state = open;
     break;
 
   default:
@@ -477,7 +424,7 @@ void loop()
     // Serial.println(gripper_state);
   }
 
-  if (object_gripped())
+  if (object_detect)
   {
     digitalWrite(LED_BUILTIN, HIGH);
   }
@@ -515,6 +462,20 @@ void loop()
 #else
   motor_system_state_machine();
 #endif
+
+  /* TON delay acting as a filter for quick dips.*/
+  if (object_gripped())
+  {
+    if ((millis() - trigger_time) > PRESSURE_FILTER_MS)
+    {
+      object_detect = true;
+    }
+  }
+  else
+  {
+    object_detect = false;
+    trigger_time = millis();
+  }
 
 #ifdef VERBOSE_SERIAL
 
